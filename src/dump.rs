@@ -105,8 +105,17 @@ pub fn write_trace<W: Write>(
         "".to_owned()
     };
 
-    match trace.thread_name.as_ref() {
-        Some(name) => {
+    match (trace.trio_task.as_ref(), trace.thread_name.as_ref()) {
+        (Some(task), _) => {
+            writeln!(
+                out,
+                "Trio task \"{}\"{} on thread {}",
+                style(task).bold().yellow(),
+                if trace.active { " (running)" } else { "" },
+                thread_id
+            )?;
+        }
+        (None, Some(name)) => {
             writeln!(
                 out,
                 "Thread {}{}: \"{}\"",
@@ -115,7 +124,7 @@ pub fn write_trace<W: Write>(
                 name
             )?;
         }
-        None => {
+        (None, None) => {
             writeln!(out, "Thread {}{}", style(thread_id).bold().yellow(), status)?;
         }
     };
@@ -133,13 +142,15 @@ pub fn write_trace<W: Write>(
                 style(&filename).cyan(),
                 style(frame.line).dim()
             )?;
-        } else {
+        } else if !filename.is_empty() {
             writeln!(
                 out,
                 "    {} ({})",
                 style(&frame.name).green(),
                 style(&filename).cyan()
             )?;
+        } else {
+            writeln!(out, "    {}", style(&frame.name).green())?;
         }
 
         if let Some(locals) = &frame.locals {

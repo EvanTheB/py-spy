@@ -25,6 +25,7 @@ mod sampler;
 mod speedscope;
 mod stack_trace;
 mod timer;
+mod trio;
 mod utils;
 mod version;
 

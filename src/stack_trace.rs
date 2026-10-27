@@ -30,6 +30,9 @@ pub struct StackTrace {
     pub frames: Vec<Frame>,
     /// process commandline / parent process info
     pub process_info: Option<Arc<ProcessInfo>>,
+    /// The name of the trio task this stack belongs to (only set with --trio)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trio_task: Option<String>,
 }
 
 /// Information about a single function call in a stack trace
@@ -245,6 +248,7 @@ where
         active: true,
         os_thread_id: thread.native_thread_id(),
         process_info: None,
+        trio_task: None,
     })
 }
 
@@ -272,7 +276,7 @@ impl StackTrace {
 }
 
 /// Returns the line number from a PyCodeObject (given the lasti index from a PyFrameObject)
-fn get_line_number<C: CodeObject, P: ProcessMemory>(
+pub(crate) fn get_line_number<C: CodeObject, P: ProcessMemory>(
     code: &C,
     lasti: i32,
     process: &P,
@@ -282,7 +286,7 @@ fn get_line_number<C: CodeObject, P: ProcessMemory>(
     Ok(code.get_line_number(lasti, &table))
 }
 
-fn get_locals<C: CodeObject, F: FrameObject, P: ProcessMemory>(
+pub(crate) fn get_locals<C: CodeObject, F: FrameObject, P: ProcessMemory>(
     code: &C,
     frameptr: *const F,
     frame: &F,

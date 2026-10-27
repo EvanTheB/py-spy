@@ -63,6 +63,8 @@ pub struct Config {
     pub refresh_seconds: f64,
     #[doc(hidden)]
     pub core_filename: Option<String>,
+    /// Whether to attribute samples to trio tasks (python 3.15+)
+    pub trio: bool,
 }
 
 #[allow(non_camel_case_types)]
@@ -133,6 +135,7 @@ impl Default for Config {
             capture_output: true,
             dump_json: false,
             dump_locals: 0,
+            trio: false,
             subprocesses: false,
             full_filenames: false,
             lineno: LineNo::LastInstruction,
@@ -213,6 +216,14 @@ impl Config {
             .help("Only include traces that are holding on to the GIL")
             .action(ArgAction::SetTrue);
 
+        let trio = Arg::new("trio")
+            .long("trio")
+            .help(
+                "Attribute samples to trio tasks (Python 3.15 only). Combine with --idle to \
+                  also include tasks waiting at an await",
+            )
+            .action(ArgAction::SetTrue);
+
         let top_delay = Arg::new("delay")
             .long("delay")
             .value_name("seconds")
@@ -275,6 +286,7 @@ impl Config {
             )
             .arg(gil.clone())
             .arg(idle.clone())
+            .arg(trio.clone())
             .arg(
                 Arg::new("capture")
                     .long("capture")
@@ -299,6 +311,7 @@ impl Config {
             .arg(full_filenames.clone())
             .arg(gil.clone())
             .arg(idle.clone())
+            .arg(trio.clone())
             .arg(top_delay.clone());
 
         #[cfg(target_os = "linux")]
@@ -331,6 +344,10 @@ impl Config {
                 .short('j')
                 .long("json")
                 .help("Format output as JSON")
+                .action(ArgAction::SetTrue))
+            .arg(Arg::new("trio")
+                .long("trio")
+                .help("Show the stack of every trio task (Python 3.15 only)")
                 .action(ArgAction::SetTrue))
             .arg(subprocesses.clone());
 
@@ -449,6 +466,9 @@ impl Config {
         }
 
         config.subprocesses = matches.get_flag("subprocesses");
+        if subcommand != "completions" {
+            config.trio = matches.get_flag("trio");
+        }
         config.command = subcommand.to_owned();
         config.collect_thread_names = match subcommand {
             "record" => config.include_thread_ids || config.format == Some(FileFormat::speedscope),

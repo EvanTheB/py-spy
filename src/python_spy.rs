@@ -21,6 +21,7 @@ use crate::python_interpreters::{InterpreterState, ThreadState};
 use crate::python_process_info::{get_python_version, PythonProcessInfo, PythonProcessLayout};
 use crate::python_threading::thread_name_lookup;
 use crate::stack_trace::{get_gil_threadid, get_stack_trace, StackTrace};
+use crate::trio::TrioInspector;
 use crate::version::Version;
 
 /// Lets you retrieve stack traces of a running python program
@@ -38,6 +39,7 @@ pub struct PythonSpy {
     thread_name_lookup_time: Instant,
     #[cfg(target_os = "linux")]
     pub dockerized: bool,
+    trio: Option<TrioInspector>,
 }
 
 impl PythonSpy {
@@ -64,6 +66,12 @@ impl PythonSpy {
             addresses.interpreter_address
         );
 
+        let trio = if config.trio {
+            Some(TrioInspector::new(&version)?)
+        } else {
+            None
+        };
+
         #[cfg(feature = "unwind")]
         let native = if config.native {
             Some(NativeStack::new(
@@ -89,6 +97,7 @@ impl PythonSpy {
             python_thread_ids: HashMap::new(),
             python_thread_names: HashMap::new(),
             thread_name_lookup_time: Instant::now(),
+            trio,
         })
     }
 
@@ -332,6 +341,27 @@ impl PythonSpy {
                 }
             }
 
+            // Attribute the stack to trio tasks, adding traces for waiting tasks if requested
+            let mut trio_traces = Vec::new();
+            if let Some(trio) = self.trio.as_mut() {
+                let include_waiting = self.config.include_idle || self.config.command == "dump";
+                match trio.annotate(
+                    &self.process,
+                    thread.frame(None) as usize,
+                    &mut trace,
+                    self.config.lineno,
+                    include_waiting,
+                ) {
+                    Ok(traces) => trio_traces = traces,
+                    Err(e) => warn!("Failed to get trio tasks: {}", e),
+                }
+            }
+            for trace in &mut trio_traces {
+                for frame in &mut trace.frames {
+                    frame.short_filename = self.shorten_filename(&frame.filename);
+                }
+            }
+
             for frame in &mut trace.frames {
                 frame.short_filename = self.shorten_filename(&frame.filename);
                 if let Some(locals) = frame.locals.as_mut() {
@@ -349,6 +379,7 @@ impl PythonSpy {
             }
 
             traces.push(trace);
+            traces.extend(trio_traces);
 
             if self.config.gil_only {
                 // There's only one GIL thread and we've captured it, so we can

@@ -203,6 +203,12 @@ impl<'a, P: ProcessMemory> DictIterator<'a, P> {
             }
         }
 
+        // In python 3.13+ with inline values, the word read above is the managed weakref
+        // list, not a values pointer: the values are used unless a dict was materialized.
+        if version.major == 3 && version.minor >= 13 && flags & PY_TPFLAGS_INLINE_VALUES != 0 {
+            values_addr = if dict_addr == 0 { addr } else { 0 };
+        }
+
         if values_addr != 0 {
             let ht_cached_keys = if version.major == 3 && version.minor >= 15 {
                 let ht: crate::python_bindings::v3_15_0::PyHeapTypeObject =

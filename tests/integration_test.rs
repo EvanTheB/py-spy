@@ -833,3 +833,81 @@ fn test_dump_subprocesses_no_duplication() {
 
     let _ = child.0.kill();
 }
+
+#[test]
+fn test_trio_tasks() {
+    // trio support needs python 3.15 with trio installed
+    let has_trio = std::process::Command::new("python")
+        .args([
+            "-c",
+            "import sys, trio; sys.exit(sys.version_info[:2] != (3, 15))",
+        ])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !has_trio {
+        eprintln!("skipping test_trio_tasks: needs python 3.15 with trio installed");
+        return;
+    }
+
+    let config = Config {
+        include_idle: true,
+        trio: true,
+        ..Default::default()
+    };
+    let mut runner = TestRunner::new(config, "./tests/scripts/trio_tasks.py");
+
+    let mut saw_busy_running = false;
+    for _ in 0..100 {
+        let traces = runner.spy.get_stack_traces().unwrap();
+        let tasks: HashSet<&str> = traces
+            .iter()
+            .filter_map(|trace| trace.trio_task.as_deref())
+            .collect();
+        for name in ["__main__.main", "busy", "parent", "sleeper"] {
+            assert!(tasks.contains(name), "missing trio task {name}: {tasks:?}");
+        }
+
+        // waiting tasks show their await stack, followed by their ancestor tasks
+        let sleeper = traces
+            .iter()
+            .find(|trace| trace.trio_task.as_deref() == Some("sleeper"))
+            .unwrap();
+        assert!(!sleeper.active);
+        let names: Vec<&str> = sleeper.frames.iter().map(|f| f.name.as_str()).collect();
+        let pos = |name: &str| {
+            names
+                .iter()
+                .position(|n| *n == name)
+                .unwrap_or_else(|| panic!("missing frame {name}: {names:?}"))
+        };
+        assert!(pos("sleep") < pos("sleeper"));
+        assert!(pos("sleeper") < pos("<trio task sleeper>"));
+        assert!(pos("<trio task sleeper>") < pos("<trio task parent>"));
+        assert!(pos("<trio task parent>") < pos("<trio task __main__.main>"));
+        assert!(pos("<trio task __main__.main>") < pos("run"));
+        assert!(!names.contains(&"unrolled_run"));
+
+        // the running task replaces trio's unrolled_run frame with its task names
+        let busy = traces
+            .iter()
+            .find(|trace| trace.trio_task.as_deref() == Some("busy"))
+            .unwrap();
+        if busy.active && busy.frames.first().map(|f| f.name.as_str()) == Some("burn") {
+            let names: Vec<&str> = busy.frames.iter().map(|f| f.name.as_str()).collect();
+            assert_eq!(
+                &names[..4],
+                &[
+                    "burn",
+                    "busy",
+                    "<trio task busy>",
+                    "<trio task __main__.main>"
+                ]
+            );
+            saw_busy_running = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(saw_busy_running);
+}

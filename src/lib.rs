@@ -48,6 +48,7 @@ mod python_threading;
 pub mod sampler;
 pub mod stack_trace;
 pub mod timer;
+mod trio;
 mod utils;
 mod version;
 
